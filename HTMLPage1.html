@@ -1,0 +1,627 @@
+﻿
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>IronPulse - Music Player</title>
+<style>
+:root {
+  color-scheme: dark;
+  --bg: #171321;
+  --panel: #292238;
+  --purple: #7545a5;
+  --glow: #bd8cff;
+  --text: #f8f4ff;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+  font-family: Arial, sans-serif;
+}
+header {
+  text-align: center;
+  padding: 24px 12px 14px;
+}
+h1 {
+  color: var(--glow);
+  font-size: clamp(28px, 6vw, 42px);
+  letter-spacing: 5px;
+  margin: 0;
+}
+header p { color: #b9a9cc; }
+main {
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+  gap: 16px;
+  max-width: 1000px;
+  padding: 16px;
+  margin: auto;
+}
+.panel {
+  background: #211a2d;
+  border: 1px solid #443452;
+  border-radius: 14px;
+  padding: 16px;
+  min-width: 0;
+}
+h2 {
+  font-size: 14px;
+  letter-spacing: 2px;
+  color: var(--glow);
+}
+ul {
+  list-style: none;
+  padding: 0;
+  margin: 12px 0;
+}
+li {
+  padding: 12px;
+  background: var(--panel);
+  border-radius: 8px;
+  margin: 7px 0;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+li.selected {
+  outline: 2px solid var(--glow);
+  background: #45305e;
+}
+button, .file-button {
+  display: inline-block;
+  border: 0;
+  border-radius: 8px;
+  padding: 11px 13px;
+  background: var(--purple);
+  color: white;
+  font-weight: bold;
+  cursor: pointer;
+  font-size: 13px;
+}
+button:hover, .file-button:hover { filter: brightness(1.2); }
+button:focus-visible, li:focus-visible {
+  outline: 2px solid white;
+  outline-offset: 2px;
+}
+.secondary { background: #453650; }
+.danger { background: #71394d; }
+.wide { width: 100%; margin-top: 7px; }
+input[type="text"] {
+  width: 100%;
+  padding: 12px;
+  border: 1px solid #514061;
+  border-radius: 8px;
+  background: var(--panel);
+  color: white;
+  margin: 8px 0;
+}
+input[type="file"] { display: none; }
+.song-name { display: block; }
+.song-meta { color: #b9a9cc; font-size: 12px; }
+.empty { color: #b9a9cc; font-size: 14px; }
+#status {
+  color: var(--glow);
+  min-height: 20px;
+  overflow-wrap: anywhere;
+}
+.player {
+  max-width: 1000px;
+  margin: 0 auto 24px;
+  padding: 16px;
+}
+.player-inner {
+  background: #211a2d;
+  border: 1px solid #443452;
+  border-radius: 14px;
+  padding: 18px;
+  text-align: center;
+}
+#nowPlaying { overflow-wrap: anywhere; }
+.controls {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 14px 0;
+}
+audio { width: 100%; max-width: 600px; }
+.note {
+  font-size: 12px;
+  line-height: 1.5;
+  color: #b9a9cc;
+}
+@media (max-width: 620px) {
+  main { grid-template-columns: 1fr; }
+  .player { padding: 12px; }
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>IRONPULSE</h1>
+  <p>Your music. Your playlists. Your pulse.</p>
+</header>
+
+<main>
+  <section class="panel">
+    <h2>PLAYLISTS</h2>
+    <ul id="playlists"></ul>
+    <form id="createForm">
+      <input id="playlistName" type="text"
+        placeholder="New playlist name" maxlength="80" required>
+      <button class="wide" type="submit">+ New Playlist</button>
+    </form>
+    <button id="deletePlaylist" class="wide danger">
+      Delete Selected Playlist
+    </button>
+  </section>
+
+  <section class="panel">
+    <h2 id="songsHeading">SONGS</h2>
+    <p id="emptySongs" class="empty">Create or select a playlist first.</p>
+    <ul id="songs"></ul>
+
+    <label class="file-button wide" for="musicFiles">
+      + Add Music Files
+    </label>
+    <input id="musicFiles" type="file"
+      accept="audio/*,.mp3,.wav,.ogg,.m4a,.aac,.flac" multiple>
+
+    <button id="removeSong" class="wide secondary">
+      Remove Selected Song
+    </button>
+  </section>
+</main>
+
+<section class="player">
+  <div class="player-inner">
+    <h2>NOW PLAYING</h2>
+    <p id="nowPlaying">Nothing playing yet</p>
+    <audio id="audio" controls preload="metadata"></audio>
+    <div class="controls">
+      <button id="play">▶ PLAY</button>
+      <button id="pause" class="secondary">⏸ PAUSE</button>
+      <button id="resume" class="secondary">▶ RESUME</button>
+      <button id="stop" class="secondary">■ STOP</button>
+    </div>
+    <p id="status" role="status">Ready to rock!</p>
+    <p class="note">
+      Your playlists and imported music are saved in this browser on this
+      device. Clearing site data may erase them. This first version does
+      not sync playlists across devices.
+    </p>
+  </div>
+</section>
+
+<script>
+const $ = id => document.getElementById(id);
+const DB_NAME = "IronPulseMusicDB";
+const DB_VERSION = 1;
+const STORE = "tracks";
+const PLAYLIST_KEY = "ironpulse-playlists-v1";
+
+let playlists = {};
+let currentPlaylist = null;
+let selectedSongId = null;
+let currentTrackId = null;
+let db;
+let activeURL = null;
+
+function setStatus(message) {
+  $("status").textContent = message;
+}
+
+function openDatabase() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, DB_VERSION);
+
+    request.onupgradeneeded = () => {
+      const database = request.result;
+      if (!database.objectStoreNames.contains(STORE)) {
+        database.createObjectStore(STORE, { keyPath: "id" });
+      }
+    };
+
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+function trackRequest(mode, action) {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, mode);
+    const store = tx.objectStore(STORE);
+    let request;
+
+    try {
+      request = action(store);
+    } catch (error) {
+      reject(error);
+      return;
+    }
+
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+function getTrack(id) {
+  return trackRequest("readonly", store => store.get(id));
+}
+
+function putTrack(track) {
+  return trackRequest("readwrite", store => store.put(track));
+}
+
+function deleteTrack(id) {
+  return trackRequest("readwrite", store => store.delete(id));
+}
+
+function loadPlaylists() {
+  try {
+    const saved = localStorage.getItem(PLAYLIST_KEY);
+    const parsed = saved ? JSON.parse(saved) : {};
+
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      playlists = Object.fromEntries(
+        Object.entries(parsed)
+          .filter(([name, songs]) =>
+            typeof name === "string" &&
+            Array.isArray(songs) &&
+            songs.every(song =>
+              song &&
+              typeof song.id === "string" &&
+              typeof song.name === "string"
+            )
+          )
+      );
+    }
+  } catch (error) {
+    playlists = {};
+    setStatus("Could not read saved playlists.");
+  }
+}
+
+function savePlaylists() {
+  try {
+    localStorage.setItem(PLAYLIST_KEY, JSON.stringify(playlists));
+    return true;
+  } catch (error) {
+    setStatus("Could not save playlists. Browser storage may be full.");
+    return false;
+  }
+}
+
+function makeId() {
+  return crypto.randomUUID
+    ? crypto.randomUUID()
+    : Date.now().toString(36) + Math.random().toString(36).slice(2);
+}
+
+function selectedSongs() {
+  return currentPlaylist ? playlists[currentPlaylist] || [] : [];
+}
+
+function refreshPlaylists() {
+  const list = $("playlists");
+  list.replaceChildren();
+
+  for (const name of Object.keys(playlists)) {
+    const item = document.createElement("li");
+    item.textContent = name;
+    item.tabIndex = 0;
+    item.setAttribute("role", "button");
+    item.setAttribute("aria-pressed",
+      String(name === currentPlaylist));
+
+    if (name === currentPlaylist) item.classList.add("selected");
+
+    const choose = () => {
+      currentPlaylist = name;
+      selectedSongId = null;
+      refreshPlaylists();
+      refreshSongs();
+    };
+
+    item.addEventListener("click", choose);
+    item.addEventListener("keydown", event => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        choose();
+      }
+    });
+
+    list.appendChild(item);
+  }
+
+  if (!currentPlaylist || !playlists[currentPlaylist]) {
+    $("emptySongs").textContent = "Create or select a playlist first.";
+  }
+}
+
+function refreshSongs() {
+  const list = $("songs");
+  list.replaceChildren();
+
+  const songs = selectedSongs();
+  $("songsHeading").textContent =
+    currentPlaylist ? "SONGS — " + currentPlaylist : "SONGS";
+
+  $("emptySongs").hidden = songs.length > 0;
+  if (!songs.length) {
+    $("emptySongs").textContent = currentPlaylist
+      ? "This playlist is empty. Add some music!"
+      : "Create or select a playlist first.";
+  }
+
+  for (const song of songs) {
+    const item = document.createElement("li");
+    const title = document.createElement("span");
+    const meta = document.createElement("span");
+
+    title.className = "song-name";
+    title.textContent = song.name;
+    meta.className = "song-meta";
+    meta.textContent = song.id === selectedSongId
+      ? "Selected"
+      : "Music track";
+
+    item.append(title, meta);
+    item.tabIndex = 0;
+    item.setAttribute("role", "button");
+    item.setAttribute("aria-pressed",
+      String(song.id === selectedSongId));
+
+    if (song.id === selectedSongId) item.classList.add("selected");
+
+    const choose = () => {
+      selectedSongId = song.id;
+      refreshSongs();
+    };
+
+    item.addEventListener("click", choose);
+    item.addEventListener("keydown", event => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        choose();
+      }
+    });
+
+    list.appendChild(item);
+  }
+}
+
+$("createForm").addEventListener("submit", event => {
+  event.preventDefault();
+
+  const name = $("playlistName").value.trim();
+  if (!name) return;
+
+  if (Object.keys(playlists).some(
+    existing => existing.toLowerCase() === name.toLowerCase()
+  )) {
+    setStatus("That playlist already exists.");
+    return;
+  }
+
+  playlists[name] = [];
+  if (!savePlaylists()) {
+    delete playlists[name];
+    return;
+  }
+
+  currentPlaylist = name;
+  selectedSongId = null;
+  $("playlistName").value = "";
+  refreshPlaylists();
+  refreshSongs();
+  setStatus("Created playlist: " + name);
+});
+
+$("deletePlaylist").addEventListener("click", () => {
+  if (!currentPlaylist) {
+    setStatus("Select a playlist first.");
+    return;
+  }
+
+  const name = currentPlaylist;
+  if (!confirm('Delete playlist "' + name + '"?')) return;
+
+  delete playlists[name];
+  currentPlaylist = null;
+  selectedSongId = null;
+
+  if (!savePlaylists()) {
+    loadPlaylists();
+    return;
+  }
+
+  refreshPlaylists();
+  refreshSongs();
+  setStatus("Deleted playlist: " + name +
+    ". Imported music remains saved in this browser.");
+});
+
+$("musicFiles").addEventListener("change", async event => {
+  if (!currentPlaylist) {
+    setStatus("Create or select a playlist first.");
+    event.target.value = "";
+    return;
+  }
+
+  const files = Array.from(event.target.files || []);
+  let added = 0;
+  let failed = 0;
+
+  for (const file of files) {
+    const alreadyAdded = Object.values(playlists).some(songs =>
+      songs.some(song =>
+        song.name === file.name &&
+        song.size === file.size &&
+        song.lastModified === file.lastModified
+      )
+    );
+
+    if (alreadyAdded && selectedSongs().some(song =>
+      song.name === file.name &&
+      song.size === file.size &&
+      song.lastModified === file.lastModified
+    )) continue;
+
+    const id = makeId();
+
+    try {
+      await putTrack({
+        id,
+        name: file.name,
+        size: file.size,
+        lastModified: file.lastModified,
+        blob: file
+      });
+
+      selectedSongs().push({
+        id,
+        name: file.name,
+        size: file.size,
+        lastModified: file.lastModified
+      });
+
+      added++;
+    } catch (error) {
+      failed++;
+    }
+  }
+
+  if (!savePlaylists()) {
+    setStatus("Playlist saving failed. Check browser storage.");
+  } else {
+    refreshSongs();
+    setStatus("Added " + added + " song(s)." +
+      (failed ? " " + failed + " could not be saved." : ""));
+  }
+
+  event.target.value = "";
+});
+
+$("removeSong").addEventListener("click", async () => {
+  if (!currentPlaylist || !selectedSongId) {
+    setStatus("Select a song to remove.");
+    return;
+  }
+
+  const songs = selectedSongs();
+  const index = songs.findIndex(song => song.id === selectedSongId);
+  if (index < 0) return;
+
+  const [removed] = songs.splice(index, 1);
+  selectedSongId = null;
+
+  if (currentTrackId === removed.id) stopPlayback();
+
+  if (!savePlaylists()) {
+    songs.splice(index, 0, removed);
+    refreshSongs();
+    return;
+  }
+
+  const usedElsewhere = Object.values(playlists).some(playlist =>
+    playlist.some(song => song.id === removed.id)
+  );
+
+  if (!usedElsewhere) {
+    try {
+      await deleteTrack(removed.id);
+    } catch (error) {
+      setStatus("Song removed from playlist, but stored file cleanup failed.");
+    }
+  }
+
+  refreshSongs();
+  setStatus("Removed song from playlist.");
+});
+
+async function playSelected() {
+  if (!currentPlaylist || !selectedSongId) {
+    setStatus("Select a playlist and song first.");
+    return;
+  }
+
+  const song = selectedSongs().find(item => item.id === selectedSongId);
+  if (!song) return;
+
+  try {
+    const track = await getTrack(song.id);
+    if (!track || !track.blob) {
+      setStatus("Music file missing. Add the song again.");
+      return;
+    }
+
+    if (activeURL) URL.revokeObjectURL(activeURL);
+    activeURL = URL.createObjectURL(track.blob);
+    $("audio").src = activeURL;
+    currentTrackId = song.id;
+    $("nowPlaying").textContent = song.name;
+    await $("audio").play();
+    setStatus("Playing: " + song.name);
+  } catch (error) {
+    setStatus("Playback failed. Try pressing PLAY again.");
+  }
+}
+
+function stopPlayback() {
+  $("audio").pause();
+  $("audio").removeAttribute("src");
+  $("audio").load();
+
+  if (activeURL) URL.revokeObjectURL(activeURL);
+  activeURL = null;
+  currentTrackId = null;
+  $("nowPlaying").textContent = "Nothing playing";
+  setStatus("Playback stopped.");
+}
+
+$("play").addEventListener("click", playSelected);
+
+$("pause").addEventListener("click", () => {
+  $("audio").pause();
+  setStatus("Playback paused.");
+});
+
+$("resume").addEventListener("click", async () => {
+  try {
+    await $("audio").play();
+    setStatus("Playback resumed.");
+  } catch (error) {
+    setStatus("Select a song and press PLAY first.");
+  }
+});
+
+$("stop").addEventListener("click", stopPlayback);
+
+$("audio").addEventListener("ended", () => {
+  setStatus("Finished playing.");
+});
+
+$("audio").addEventListener("error", () => {
+  setStatus("The browser could not play this audio file.");
+});
+
+async function start() {
+  try {
+    db = await openDatabase();
+    loadPlaylists();
+    refreshPlaylists();
+    refreshSongs();
+    setStatus("Ready to rock!");
+  } catch (error) {
+    setStatus("Browser storage is unavailable. Try another browser.");
+  }
+}
+
+start();
+</script>
+</body>
+</html>
